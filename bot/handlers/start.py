@@ -34,45 +34,49 @@ async def check_all_subscriptions(bot, user_id: int) -> list:
 
 @router.message(CommandStart())
 async def cmd_start(message: Message):
-    user = message.from_user
-    await db.add_user(telegram_id=user.id, username=user.username or "", full_name=user.full_name or "")
+    try:
+        user = message.from_user
+        await db.add_user(telegram_id=user.id, username=user.username or "", full_name=user.full_name or "")
 
-    not_subscribed = await check_all_subscriptions(message.bot, user.id)
-    if not_subscribed:
+        not_subscribed = await check_all_subscriptions(message.bot, user.id)
+        if not_subscribed:
+            await message.answer(
+                "🎬 <b>KINO UZ - Rasmiy botiga xush kelibsiz!</b> 🍿\n\n"
+                "Siz bu yerda eng so'nggi premyeralar, ommabop seriallar va multfilmlarni tomosha qilishingiz mumkin.\n\n"
+                "⚠️ <b>Botdan foydalanish uchun rasmiy kanallarimizga obuna bo'ling:</b>",
+                reply_markup=channel_subscribe_keyboard(not_subscribed),
+                parse_mode="HTML",
+            )
+            return
+
         await message.answer(
-            "🎬 <b>KINO UZ - Rasmiy botiga xush kelibsiz!</b> 🍿\n\n"
-            "Siz bu yerda eng so'nggi premyeralar, ommabop seriallar va multfilmlarni tomosha qilishingiz mumkin.\n\n"
-            "⚠️ <b>Botdan foydalanish uchun rasmiy kanallarimizga obuna bo'ling:</b>",
-            reply_markup=channel_subscribe_keyboard(not_subscribed),
+            f"🌟 <b>Salom, {user.first_name}! KINO UZ platformasiga xush kelibsiz!</b> 🎉\n\n"
+            "Siz uchun eng sara kinolar, tarjima seriallar va sevimli multfilmlar to'plandi!\n\n"
+            "<b>🔥 Bizning qulayliklar:</b>\n"
+            "  • 📱 <b>Mini App orqali</b> Netflix uslubidagi qulay UI/UX dizayn\n"
+            "  • 👍 Filmlarga baho (Like/Dislike) berish\n"
+            "  • 🎬 Kinoni botdan yuborib ko'rish",
+            reply_markup=main_menu_keyboard(),
             parse_mode="HTML",
         )
-        return
 
-    await message.answer(
-        f"🌟 <b>Salom, {user.first_name}! KINO UZ platformasiga xush kelibsiz!</b> 🎉\n\n"
-        "Siz uchun eng sara kinolar, tarjima seriallar va sevimli multfilmlar to'plandi!\n\n"
-        "<b>🔥 Bizning qulayliklar:</b>\n"
-        "  • 📱 <b>Mini App orqali</b> Netflix uslubidagi qulay UI/UX dizayn\n"
-        "  • 👍 Filmlarga baho (Like/Dislike) berish\n"
-        "  • 🎬 Kinoni botdan yuborib ko'rish",
-        reply_markup=main_menu_keyboard(),
-        parse_mode="HTML",
-    )
-
-    # Mini App inline tugmasini alohida xabarda yuborish
-    if WEBAPP_URL.startswith("https://"):
-        inline_kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
-                text="📱 Mini App ochish",
-                web_app=WebAppInfo(url=WEBAPP_URL)
-            )]
-        ])
-        await message.answer(
+        # Mini App inline tugmasini alohida xabarda yuborish
+        if WEBAPP_URL.startswith("https://"):
+            inline_kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="📱 Mini App ochish",
+                    web_app=WebAppInfo(url=WEBAPP_URL)
+                )]
+            ])
+            await message.answer(
             "👇 <b>Mini App</b>'ni ochish uchun quyidagi tugmani bosing:",
             reply_markup=inline_kb,
             parse_mode="HTML",
         )
-
+    except Exception as e:
+        import logging
+        logging.error(f"Start handler error: {e}", exc_info=True)
+        await message.answer(f"❌ Xatolik yuz berdi: {e}")
 
 
 @router.callback_query(F.data == "check_sub")
