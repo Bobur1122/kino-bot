@@ -8,7 +8,6 @@ import psutil
 import aiohttp
 from bs4 import BeautifulSoup
 import json
-from config import DATABASE_PATH
 
 # IMDb parser uchun sarlavhalar (IMDb request bloklamasligi uchun)
 HEADERS = {
@@ -167,8 +166,5 @@ def get_server_status() -> dict:
 
 
 def create_backup() -> str:
-    """SQLite faylini backup papkaga nusxalash va fayl yo'lini qaytarish."""
-    os.makedirs("backups", exist_ok=True)
-    filename = f"backups/db_backup_{int(time.time())}.db"
-    shutil.copy2(DATABASE_PATH, filename)
-    return filename
+    """MongoDB Atlas avtomatik backup qiladi — bu funksiya endi kerak emas."""
+    return "MongoDB Atlas avtomatik backup qiladi."
