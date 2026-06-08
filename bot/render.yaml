@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: kino-bot-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_IDS
+        sync: false
+      - key: CHANNEL_ID
+        sync: false
+      - key: CHANNEL_URL
+        sync: false
+      - key: WEBAPP_URL
+        sync: false
+      - key: WEBHOOK_URL
+        sync: false
+      - key: PORT
+        value: "10000"

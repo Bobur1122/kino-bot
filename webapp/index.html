@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>KinoUz - Premium Streaming Platform</title>
+    <meta name="description" content="Telegram premium kino va seriallar platformasi">
+    <meta name="kino-api-base-url" content="https://kino-bot-api.onrender.com">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+    <div id="loading-screen" class="loading-screen">
+        <div class="loader-content">
+            <div class="brand-logo">🎬</div>
+            <div class="loader-text">KINO<span>UZ</span></div>
+            <div class="loader-bar">
+                <div class="loader-progress"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="app" class="app" style="display:none;">
+        <header class="header" id="header">
+            <div class="header-left">
+                <h1 class="logo">KINO<span>UZ</span></h1>
+            </div>
+            <div class="header-right">
+                <button class="header-btn" id="search-toggle" aria-label="Qidirish">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                </button>
+            </div>
+        </header>
+
+        <div id="notification-toast" class="notification-toast"></div>
+
+        <main class="pages-container">
+            <section class="page active" id="page-home">
+                <div class="hero" id="hero-section">
+                    <div class="hero-bg" id="hero-bg"></div>
+                    <div class="hero-overlay"></div>
+                    <div class="hero-content">
+                        <div class="hero-posters" id="hero-posters"></div>
+                        <div class="hero-badge" id="hero-badge">OXIRGI 5 TA POSTER</div>
+                        <h2 class="hero-title" id="hero-title">Kino yuklanmoqda...</h2>
+                        <div class="hero-tags" id="hero-tags"></div>
+                        <p class="hero-meta" id="hero-meta"></p>
+                        <div class="hero-actions">
+                            <button class="btn-play" id="hero-play">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                                KO'RISH
+                            </button>
+                            <button class="btn-info" id="hero-info">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                                TAFSILOTLAR
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section" id="section-popular">
+                    <h3 class="section-title">Trenddagilar</h3>
+                    <div class="cards-scroll" id="popular-cards"></div>
+                </div>
+
+                <div class="section" id="section-new">
+                    <h3 class="section-title">Yangi qo'shilganlar</h3>
+                    <div class="cards-scroll" id="new-cards"></div>
+                </div>
+
+                <div class="section" id="section-kino-preview">
+                    <h3 class="section-title">Badiiy Filmlar</h3>
+                    <div class="cards-scroll" id="kino-preview-cards"></div>
+                </div>
+
+                <div class="section" id="section-serial-preview">
+                    <h3 class="section-title">Ommabop Seriallar</h3>
+                    <div class="cards-scroll" id="serial-preview-cards"></div>
+                </div>
+
+                <div class="section" id="section-multfilm-preview">
+                    <h3 class="section-title">Multfilmlar</h3>
+                    <div class="cards-scroll" id="multfilm-preview-cards"></div>
+                </div>
+            </section>
+
+            <section class="page" id="page-categories">
+                <div class="page-header">
+                    <h2 class="page-title">Toifalar</h2>
+                    <div class="category-tabs">
+                        <button class="tab-btn active" data-category="all">Barchasi</button>
+                        <button class="tab-btn" data-category="kino">Kinolar</button>
+                        <button class="tab-btn" data-category="serial">Seriallar</button>
+                        <button class="tab-btn" data-category="multfilm">Multfilmlar</button>
+                    </div>
+                </div>
+                <div class="cards-grid" id="categories-grid"></div>
+                <div class="empty-state" id="categories-empty" style="display:none;">
+                    <div class="empty-icon">📁</div>
+                    <p>Hech qanday ma'lumot topilmadi</p>
+                </div>
+            </section>
+
+            <section class="page" id="page-search">
+                <div class="search-page-input-wrap">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                    <input type="text" id="search-page-input" placeholder="Kino, serial yoki multfilm qidirish..." autocomplete="off">
+                </div>
+                <div class="cards-grid" id="search-grid"></div>
+                <div class="empty-state" id="search-empty">
+                    <div class="empty-icon">🔍</div>
+                    <p>Kino yoki janr nomini yozing</p>
+                </div>
+            </section>
+        </main>
+
+        <div class="modal-overlay" id="movie-modal">
+            <div class="modal-content">
+                <div class="modal-poster" id="modal-poster"></div>
+                <div class="modal-gradient"></div>
+                <button class="modal-close" id="modal-close">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                </button>
+
+                <div class="modal-body">
+                    <div class="modal-badge-row">
+                        <span class="modal-badge" id="modal-badge">KINO</span>
+                        <span class="modal-rating-imdb" id="modal-rating-imdb">⭐ 8.5</span>
+                    </div>
+
+                    <h2 class="modal-title" id="modal-title">Film Nomi</h2>
+
+                    <div class="modal-meta-grid" id="modal-meta-grid">
+                        <div>Yil: <span id="meta-year">2024</span></div>
+                        <div>Vaqt: <span id="meta-duration">120 daqiqa</span></div>
+                        <div>Davlat: <span id="meta-country">AQSH</span></div>
+                        <div>Til: <span id="meta-language">O'zbekcha</span></div>
+                        <div>Dublyaj: <span id="meta-dub">Professional</span></div>
+                        <div>Janr: <span id="meta-genre">Komediy, Jangari</span></div>
+                    </div>
+
+                    <p class="modal-desc" id="modal-desc">Kino haqida batafsil ma'lumotlar bu yerda ko'rinadi.</p>
+
+                    <div class="modal-main-actions">
+                        <button class="btn-watch" id="modal-watch">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                            BOTDA KO'RISH
+                        </button>
+                        <button class="btn-trailer" id="modal-trailer" style="display: none;">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+                            TREYLER
+                        </button>
+                    </div>
+
+                    <div class="modal-interact-bar">
+                        <div class="rating-vote-box">
+                            <button class="vote-btn" id="btn-like" aria-label="Like">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+                            </button>
+                            <span id="likes-count">0</span>
+                            <button class="vote-btn" id="btn-dislike" aria-label="Dislike">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/></svg>
+                            </button>
+                            <span id="dislikes-count">0</span>
+                        </div>
+                    </div>
+
+                    <div class="modal-recs" id="modal-recommendations-wrapper">
+                        <h4 class="recs-title">Sizga tavsiya etiladi</h4>
+                        <div class="recs-grid" id="modal-recommendations"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <nav class="bottom-nav" id="bottom-nav">
+            <button class="nav-item active" data-page="home">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
+                <span>Asosiy</span>
+            </button>
+            <button class="nav-item" data-page="categories">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
+                <span>Toifalar</span>
+            </button>
+            <button class="nav-item" data-page="search">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                <span>Qidirish</span>
+            </button>
+        </nav>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
