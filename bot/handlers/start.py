@@ -3,9 +3,10 @@ Start handler - /start, menyu, majburiy obuna (bazadan kanallar).
 """
 from aiogram import Router, F
 from aiogram.filters import CommandStart
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 
 import database as db
+from config import WEBAPP_URL
 from keyboards.inline import (
     main_menu_keyboard,
     channel_subscribe_keyboard,
@@ -53,11 +54,25 @@ async def cmd_start(message: Message):
         "<b>🔥 Bizning qulayliklar:</b>\n"
         "  • 📱 <b>Mini App orqali</b> Netflix uslubidagi qulay UI/UX dizayn\n"
         "  • 👍 Filmlarga baho (Like/Dislike) berish\n"
-        "  • 🎬 Kinoni botdan yuborib ko'rish\n\n"
-        "👇 Quyidagi <b>🚀 Kinolar</b> tugmasini bosing yoki Mini App'ni oching!",
+        "  • 🎬 Kinoni botdan yuborib ko'rish",
         reply_markup=main_menu_keyboard(),
         parse_mode="HTML",
     )
+
+    # Mini App inline tugmasini alohida xabarda yuborish
+    if WEBAPP_URL.startswith("https://"):
+        inline_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="📱 Mini App ochish",
+                web_app=WebAppInfo(url=WEBAPP_URL)
+            )]
+        ])
+        await message.answer(
+            "👇 <b>Mini App</b>'ni ochish uchun quyidagi tugmani bosing:",
+            reply_markup=inline_kb,
+            parse_mode="HTML",
+        )
+
 
 
 @router.callback_query(F.data == "check_sub")
