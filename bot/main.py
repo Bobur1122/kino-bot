@@ -5,13 +5,14 @@ Render uchun webhook rejimida.
 """
 import asyncio
 import logging
+import traceback
 from contextlib import asynccontextmanager
 
 import uvicorn
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import Update
+from aiogram.types import Update, ErrorEvent
 from aiogram.client.default import DefaultBotProperties
 
 from config import BOT_TOKEN, WEBHOOK_URL, WEBHOOK_PATH, PORT
@@ -40,6 +41,27 @@ dp.include_router(channel_post_router)
 dp.include_router(search_router)
 
 
+# ===== GLOBAL XATO HANDLER — bot hech qachon "qotmaydi" =====
+@dp.error()
+async def global_error_handler(event: ErrorEvent):
+    """Barcha xatoliklarni ushlash — bot qotib qolmasligi uchun."""
+    logger.error(f"Bot error: {event.exception}", exc_info=True)
+
+    update = event.update
+    try:
+        if update and update.callback_query:
+            cb = update.callback_query
+            await cb.answer(f"❌ Xatolik yuz berdi", show_alert=True)
+            try:
+                await cb.message.answer(f"⚠️ Xatolik: {event.exception}")
+            except Exception:
+                pass
+        elif update and update.message:
+            await update.message.answer(f"⚠️ Xatolik: {event.exception}")
+    except Exception:
+        pass
+
+
 @asynccontextmanager
 async def lifespan(application):
     """FastAPI lifecycle — bot webhook o'rnatish."""
@@ -50,7 +72,11 @@ async def lifespan(application):
 
     if WEBHOOK_URL:
         webhook_full = WEBHOOK_URL.rstrip("/") + WEBHOOK_PATH
-        await bot.set_webhook(webhook_full, drop_pending_updates=True)
+        await bot.set_webhook(
+            webhook_full,
+            drop_pending_updates=True,
+            allowed_updates=["message", "callback_query", "channel_post"]
+        )
         logger.info(f"Webhook set: {webhook_full}")
     else:
         logger.info("No WEBHOOK_URL — starting polling mode")
