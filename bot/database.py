@@ -1,38 +1,57 @@
 """
-Database — MongoDB (motor async driver).
+Database — MongoDB (motor) — OPTIMIZED.
+Tez ishlash uchun: connection pooling, caching, indexed queries.
 """
 import time
 from motor.motor_asyncio import AsyncIOMotorClient
 from config import MONGO_URI, ADMIN_IDS
+from functools import lru_cache
 
 client = None
 db = None
 
+# ===== CACHE =====
+_channels_cache = {"data": None, "time": 0}
+_CACHE_TTL = 300  # 5 daqiqa
+
+
+def _invalidate_channels():
+    _channels_cache["data"] = None
+    _channels_cache["time"] = 0
+
 
 async def init_db():
     global client, db
-    client = AsyncIOMotorClient(MONGO_URI)
+    client = AsyncIOMotorClient(
+        MONGO_URI,
+        maxPoolSize=10,
+        minPoolSize=2,
+        serverSelectionTimeoutMS=5000,
+        connectTimeoutMS=5000,
+        socketTimeoutMS=10000,
+    )
     db = client.kinodb
 
-    # Indexes
+    # Indexes (idempotent)
     await db.movies.create_index("id", unique=True)
+    await db.movies.create_index("category")
+    await db.movies.create_index("views")
+    await db.movies.create_index("created_at")
+    await db.movies.create_index([("title", "text"), ("genre", "text")])
     await db.users.create_index("telegram_id", unique=True)
     await db.ratings.create_index([("user_id", 1), ("movie_id", 1)], unique=True)
     await db.channels.create_index("channel_id", unique=True)
     await db.admins.create_index("telegram_id", unique=True)
     await db.search_queries.create_index("query", unique=True)
 
-    # Counters
     await db.counters.update_one(
         {"_id": "movies"}, {"$setOnInsert": {"seq": 0}}, upsert=True
     )
-    # Stats modifier
     await db.stats_modifier.update_one(
         {"_id": "main"},
         {"$setOnInsert": {"fake_users": 0, "fake_views": 0}},
         upsert=True,
     )
-    # Base admins
     for aid in ADMIN_IDS:
         if aid and aid > 0:
             await db.admins.update_one(
@@ -126,12 +145,18 @@ async def get_movies(limit=50, category=None, sort="id DESC"):
 
 
 async def search_movies(query: str):
-    return await db.movies.find(
-        {"$or": [
-            {"title": {"$regex": query, "$options": "i"}},
-            {"genre": {"$regex": query, "$options": "i"}},
-        ]}, {"_id": 0}
-    ).sort("views", -1).limit(20).to_list(20)
+    try:
+        return await db.movies.find(
+            {"$text": {"$search": query}},
+            {"_id": 0, "score": {"$meta": "textScore"}}
+        ).sort([("score", {"$meta": "textScore"})]).limit(20).to_list(20)
+    except Exception:
+        return await db.movies.find(
+            {"$or": [
+                {"title": {"$regex": query, "$options": "i"}},
+                {"genre": {"$regex": query, "$options": "i"}},
+            ]}, {"_id": 0}
+        ).sort("views", -1).limit(20).to_list(20)
 
 
 async def get_top_movies(limit=10):
@@ -164,7 +189,17 @@ async def add_watch_history(user_id: int, movie_id: int):
     await db.watch_history.insert_one({"user_id": user_id, "movie_id": movie_id, "watched_at": time.time()})
 
 
-# ==================== CHANNELS ====================
+# ==================== CHANNELS (CACHED) ====================
+
+async def _get_channels_cached():
+    now = time.time()
+    if _channels_cache["data"] is not None and now - _channels_cache["time"] < _CACHE_TTL:
+        return _channels_cache["data"]
+    data = await db.channels.find({}, {"_id": 0}).sort("_id", 1).to_list(None)
+    _channels_cache["data"] = data
+    _channels_cache["time"] = now
+    return data
+
 
 async def add_channel(channel_id: int, url="", name="",
                       mandatory=False, notification=False, hidden=False):
@@ -177,22 +212,26 @@ async def add_channel(channel_id: int, url="", name="",
         }},
         upsert=True,
     )
+    _invalidate_channels()
 
 
 async def remove_channel(channel_id: int):
     await db.channels.delete_one({"channel_id": channel_id})
+    _invalidate_channels()
 
 
 async def get_channels():
-    return await db.channels.find({}, {"_id": 0}).sort("_id", 1).to_list(None)
+    return await _get_channels_cached()
 
 
 async def get_mandatory_channels():
-    return await db.channels.find({"is_mandatory": 1}, {"_id": 0}).to_list(None)
+    channels = await _get_channels_cached()
+    return [c for c in channels if c.get("is_mandatory")]
 
 
 async def get_notification_channels():
-    return await db.channels.find({"is_notification": 1}, {"_id": 0}).to_list(None)
+    channels = await _get_channels_cached()
+    return [c for c in channels if c.get("is_notification")]
 
 
 # ==================== RATINGS ====================
@@ -211,9 +250,7 @@ async def get_movie_rating(movie_id: int):
         {"$group": {"_id": None, "avg": {"$avg": "$score"}, "cnt": {"$sum": 1}}},
     ]
     r = await db.ratings.aggregate(pipe).to_list(1)
-    if r:
-        return (round(r[0]["avg"], 1), r[0]["cnt"])
-    return (0, 0)
+    return (round(r[0]["avg"], 1), r[0]["cnt"]) if r else (0, 0)
 
 
 # ==================== STATS ====================
@@ -265,22 +302,14 @@ async def get_popular_searches(limit=10):
     return await db.search_queries.find({}, {"_id": 0}).sort("count", -1).limit(limit).to_list(limit)
 
 
-# ==================== RECOMMENDATIONS ====================
+# ==================== EXTRAS ====================
 
 async def get_recommendations(movie_id: int, limit=6):
     movie = await get_movie(movie_id)
     if not movie:
         return []
-    flt = {"id": {"$ne": movie_id}, "$or": [
-        {"category": movie["category"]},
-        {"genre": {"$regex": movie.get("genre") or "", "$options": "i"}},
-    ]}
-    res = await db.movies.find(flt, {"_id": 0}).sort("views", -1).limit(limit).to_list(limit)
-    if len(res) < limit:
-        ids = [movie_id] + [r["id"] for r in res]
-        more = await db.movies.find({"id": {"$nin": ids}}, {"_id": 0}).sort("views", -1).limit(limit - len(res)).to_list(limit - len(res))
-        res.extend(more)
-    return res
+    flt = {"id": {"$ne": movie_id}, "category": movie["category"]}
+    return await db.movies.find(flt, {"_id": 0}).sort("views", -1).limit(limit).to_list(limit)
 
 
 async def get_movie_details_for_user(movie_id: int, user_id: int):
