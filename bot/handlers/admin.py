@@ -540,53 +540,66 @@ async def add_movie_video(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "confirm_add")
 async def confirm_add_movie_save(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    await state.clear()
-    
-    movie_id = await db.add_movie(
-        title=data['title'],
-        video_file_id=data['video_file_id'],
-        category=data['category'],
-        description=data.get('description', ''),
-        poster_file_id=data.get('poster_file_id', ''),
-        trailer=data.get('trailer', ''),
-        year=data.get('year', 0),
-        genre=data.get('genre', ''),
-        rating=data.get('rating', 0.0),
-        duration=data.get('duration', ''),
-        country=data.get('country', ''),
-        language=data.get('language', ''),
-        dub_sub=data.get('dub_sub', '')
-    )
-    
-    # Avtomatik bildirishnoma kanali (bazadan notification kanallarini olamiz)
-    notif_channels = await db.get_notification_channels()
-    caption = (
-        f"🆕 <b>YANGI YUKLANGAN KONTENT!</b>\n\n"
-        f"🍿 <b>{data['title']}</b>\n"
-        f"📂 Kategoriya: #{data['category']}\n"
-        f"📅 Yili: {data.get('year') or '—'}\n"
-        f"⭐ Reyting: {data.get('rating') or '—'}\n"
-        f"🎭 Janri: {data.get('genre') or '—'}\n"
-        f"🗣 Tili: {data.get('language') or '—'} ({data.get('dub_sub') or 'Asl til'})\n"
-        f"⏱ Davomiyligi: {data.get('duration') or '—'}\n\n"
-        f"🤖 Boshlash uchun botimizga kiring: @{callback.bot._me.username}"
-    )
-    
-    for ch in notif_channels:
+    try:
+        data = await state.get_data()
+        await state.clear()
+        
+        movie_id = await db.add_movie(
+            title=data['title'],
+            video_file_id=data['video_file_id'],
+            category=data['category'],
+            description=data.get('description', ''),
+            poster_file_id=data.get('poster_file_id', ''),
+            trailer=data.get('trailer', ''),
+            year=data.get('year', 0),
+            genre=data.get('genre', ''),
+            rating=data.get('rating', 0.0),
+            duration=data.get('duration', ''),
+            country=data.get('country', ''),
+            language=data.get('language', ''),
+            dub_sub=data.get('dub_sub', '')
+        )
+        
+        # Bot username
         try:
-            if data.get("poster_file_id"):
-                await callback.bot.send_photo(ch["channel_id"], data["poster_file_id"], caption=caption, parse_mode="HTML")
-            else:
-                await callback.bot.send_message(ch["channel_id"], caption, parse_mode="HTML")
+            me = await callback.bot.get_me()
+            bot_username = me.username
         except Exception:
-            pass
-            
-    await callback.message.edit_text(
-        f"✅ <b>Kino muvaffaqiyatli saqlandi!</b>\n🆔 ID: <code>{movie_id}</code>\n"
-        f"📢 Yangiliklar kanaliga bildirishnomalar yuborildi (agar mavjud bo'lsa).",
-        reply_markup=back_to_admin_keyboard(), parse_mode="HTML"
-    )
+            bot_username = "bot"
+        
+        # Avtomatik bildirishnoma kanali
+        notif_channels = await db.get_notification_channels()
+        caption = (
+            f"🆕 <b>YANGI YUKLANGAN KONTENT!</b>\n\n"
+            f"🍿 <b>{data['title']}</b>\n"
+            f"📂 Kategoriya: #{data['category']}\n"
+            f"📅 Yili: {data.get('year') or '—'}\n"
+            f"⭐ Reyting: {data.get('rating') or '—'}\n"
+            f"🎭 Janri: {data.get('genre') or '—'}\n"
+            f"🗣 Tili: {data.get('language') or '—'} ({data.get('dub_sub') or 'Asl til'})\n"
+            f"⏱ Davomiyligi: {data.get('duration') or '—'}\n\n"
+            f"🤖 Boshlash uchun botimizga kiring: @{bot_username}"
+        )
+        
+        for ch in notif_channels:
+            try:
+                if data.get("poster_file_id"):
+                    await callback.bot.send_photo(ch["channel_id"], data["poster_file_id"], caption=caption, parse_mode="HTML")
+                else:
+                    await callback.bot.send_message(ch["channel_id"], caption, parse_mode="HTML")
+            except Exception:
+                pass
+                
+        await callback.message.edit_text(
+            f"✅ <b>Kino muvaffaqiyatli saqlandi!</b>\n🆔 ID: <code>{movie_id}</code>\n"
+            f"📢 Yangiliklar kanaliga bildirishnomalar yuborildi (agar mavjud bo'lsa).",
+            reply_markup=back_to_admin_keyboard(), parse_mode="HTML"
+        )
+    except Exception as e:
+        import logging
+        logging.error(f"confirm_add error: {e}", exc_info=True)
+        await callback.message.answer(f"❌ Xatolik: {e}")
+
 
 
 # ===== KINO QIDIRISH VA FILTRLASH =====
