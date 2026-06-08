@@ -18,18 +18,15 @@ ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "0").split(",")))
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
 CHANNEL_URL = os.getenv("CHANNEL_URL", "https://t.me/your_channel")
 
-# Mini App URL — Render Static Site URL
-WEBAPP_URL = os.getenv("WEBAPP_URL", "https://kino-app.onrender.com")
+# Mini App URL — Vercel URL
+WEBAPP_URL = os.getenv("WEBAPP_URL", "https://kinowebapp-nine.vercel.app")
 
-# Bot API URL — Render Web Service URL (Mini App shu URL ga so'rov yuboradi)
-API_BASE_URL = os.getenv("API_BASE_URL", "https://kino-bot-api.onrender.com")
+# MongoDB Atlas
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/kinodb")
 
 # Webhook URL — Render Web Service URL + /webhook
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
-
-# Database
-DATABASE_PATH = os.getenv("DATABASE_PATH", "kino_bot.db")
 
 # Server port
 PORT = int(os.getenv("PORT", "10000"))

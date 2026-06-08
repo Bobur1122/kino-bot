@@ -1,473 +1,316 @@
 """
-Database — SQLite (aiosqlite).
-Channels table qo'shildi + movie fieldlar kengaytirildi.
+Database — MongoDB (motor async driver).
 """
-import aiosqlite
 import time
-from config import DATABASE_PATH, ADMIN_IDS
+from motor.motor_asyncio import AsyncIOMotorClient
+from config import MONGO_URI, ADMIN_IDS
 
-DB = DATABASE_PATH
+client = None
+db = None
 
 
 async def init_db():
-    async with aiosqlite.connect(DB) as conn:
-        await conn.executescript("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                telegram_id INTEGER UNIQUE NOT NULL,
-                username TEXT DEFAULT '',
-                full_name TEXT DEFAULT '',
-                created_at REAL DEFAULT 0,
-                is_premium INTEGER DEFAULT 0,
-                is_banned INTEGER DEFAULT 0
-            );
-            CREATE TABLE IF NOT EXISTS movies (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                video_file_id TEXT NOT NULL,
-                category TEXT DEFAULT 'kino',
-                description TEXT DEFAULT '',
-                poster_file_id TEXT DEFAULT '',
-                trailer TEXT DEFAULT '',
-                channel_message_id INTEGER DEFAULT 0,
-                year INTEGER DEFAULT 0,
-                genre TEXT DEFAULT '',
-                rating REAL DEFAULT 0,
-                duration TEXT DEFAULT '',
-                country TEXT DEFAULT '',
-                language TEXT DEFAULT '',
-                dub_sub TEXT DEFAULT '',
-                views INTEGER DEFAULT 0,
-                created_at REAL DEFAULT 0
-            );
-            CREATE TABLE IF NOT EXISTS watch_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                movie_id INTEGER NOT NULL,
-                watched_at REAL DEFAULT 0
-            );
-            CREATE TABLE IF NOT EXISTS channels (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                channel_id INTEGER UNIQUE NOT NULL,
-                channel_url TEXT DEFAULT '',
-                channel_name TEXT DEFAULT '',
-                is_mandatory INTEGER DEFAULT 0,
-                is_notification INTEGER DEFAULT 0,
-                is_hidden INTEGER DEFAULT 0,
-                added_at REAL DEFAULT 0
-            );
-            CREATE TABLE IF NOT EXISTS ratings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                movie_id INTEGER NOT NULL,
-                score INTEGER DEFAULT 0,
-                created_at REAL DEFAULT 0,
-                UNIQUE(user_id, movie_id)
-            );
-            CREATE TABLE IF NOT EXISTS stats_modifier (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                fake_users INTEGER DEFAULT 0,
-                fake_views INTEGER DEFAULT 0
-            );
-            CREATE TABLE IF NOT EXISTS search_queries (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                query TEXT UNIQUE NOT NULL,
-                count INTEGER DEFAULT 1
-            );
-            CREATE TABLE IF NOT EXISTS admins (
-                telegram_id INTEGER PRIMARY KEY,
-                added_by INTEGER DEFAULT 0,
-                added_at REAL DEFAULT 0
-            );
-            INSERT OR IGNORE INTO stats_modifier (id, fake_users, fake_views) VALUES (1, 0, 0);
-        """)
-        for admin_id in ADMIN_IDS:
-            if admin_id and admin_id > 0:
-                await conn.execute(
-                    "INSERT OR IGNORE INTO admins (telegram_id, added_by, added_at) VALUES (?,?,?)",
-                    (admin_id, 0, time.time())
-                )
-        await conn.commit()
+    global client, db
+    client = AsyncIOMotorClient(MONGO_URI)
+    db = client.kinodb
+
+    # Indexes
+    await db.movies.create_index("id", unique=True)
+    await db.users.create_index("telegram_id", unique=True)
+    await db.ratings.create_index([("user_id", 1), ("movie_id", 1)], unique=True)
+    await db.channels.create_index("channel_id", unique=True)
+    await db.admins.create_index("telegram_id", unique=True)
+    await db.search_queries.create_index("query", unique=True)
+
+    # Counters
+    await db.counters.update_one(
+        {"_id": "movies"}, {"$setOnInsert": {"seq": 0}}, upsert=True
+    )
+    # Stats modifier
+    await db.stats_modifier.update_one(
+        {"_id": "main"},
+        {"$setOnInsert": {"fake_users": 0, "fake_views": 0}},
+        upsert=True,
+    )
+    # Base admins
+    for aid in ADMIN_IDS:
+        if aid and aid > 0:
+            await db.admins.update_one(
+                {"telegram_id": aid},
+                {"$setOnInsert": {"telegram_id": aid, "added_by": 0, "added_at": time.time()}},
+                upsert=True,
+            )
+
+
+async def _next_id(name):
+    r = await db.counters.find_one_and_update(
+        {"_id": name}, {"$inc": {"seq": 1}}, upsert=True, return_document=True
+    )
+    return r["seq"]
 
 
 # ==================== USERS ====================
 
 async def add_user(telegram_id: int, username: str = "", full_name: str = ""):
-    async with aiosqlite.connect(DB) as conn:
-        await conn.execute(
-            "INSERT OR IGNORE INTO users (telegram_id, username, full_name, created_at) VALUES (?,?,?,?)",
-            (telegram_id, username, full_name, time.time())
-        )
-        await conn.execute(
-            "UPDATE users SET username=?, full_name=? WHERE telegram_id=?",
-            (username, full_name, telegram_id)
-        )
-        await conn.commit()
+    await db.users.update_one(
+        {"telegram_id": telegram_id},
+        {"$set": {"username": username, "full_name": full_name},
+         "$setOnInsert": {"created_at": time.time(), "is_premium": 0, "is_banned": 0}},
+        upsert=True,
+    )
 
 
 async def get_all_users():
-    async with aiosqlite.connect(DB) as conn:
-        conn.row_factory = aiosqlite.Row
-        cur = await conn.execute("SELECT * FROM users WHERE is_banned=0 ORDER BY id DESC")
-        return [dict(r) for r in await cur.fetchall()]
+    return await db.users.find({"is_banned": 0}, {"_id": 0}).sort("_id", -1).to_list(None)
 
 
 async def get_today_users():
-    today_start = time.time() - (time.time() % 86400)
-    async with aiosqlite.connect(DB) as conn:
-        cur = await conn.execute("SELECT COUNT(*) FROM users WHERE created_at>=?", (today_start,))
-        row = await cur.fetchone()
-        return row[0] if row else 0
+    today = time.time() - (time.time() % 86400)
+    return await db.users.count_documents({"created_at": {"$gte": today}})
 
 
 async def get_weekly_active():
     week_ago = time.time() - 604800
-    async with aiosqlite.connect(DB) as conn:
-        cur = await conn.execute(
-            "SELECT COUNT(DISTINCT user_id) FROM watch_history WHERE watched_at>=?", (week_ago,)
-        )
-        row = await cur.fetchone()
-        return row[0] if row else 0
+    pipe = [
+        {"$match": {"watched_at": {"$gte": week_ago}}},
+        {"$group": {"_id": "$user_id"}},
+        {"$count": "t"},
+    ]
+    r = await db.watch_history.aggregate(pipe).to_list(1)
+    return r[0]["t"] if r else 0
 
 
 # ==================== ADMINS ====================
 
 async def get_admin_ids():
-    async with aiosqlite.connect(DB) as conn:
-        cur = await conn.execute("SELECT telegram_id FROM admins ORDER BY telegram_id")
-        rows = await cur.fetchall()
-        return [r[0] for r in rows]
+    return [a["telegram_id"] async for a in db.admins.find({}, {"telegram_id": 1})]
 
 
 async def get_admins():
-    async with aiosqlite.connect(DB) as conn:
-        conn.row_factory = aiosqlite.Row
-        cur = await conn.execute("SELECT * FROM admins ORDER BY added_at DESC, telegram_id ASC")
-        return [dict(r) for r in await cur.fetchall()]
+    return await db.admins.find({}, {"_id": 0}).sort("added_at", -1).to_list(None)
 
 
 async def add_admin(telegram_id: int, added_by: int = 0):
-    async with aiosqlite.connect(DB) as conn:
-        await conn.execute(
-            "INSERT OR IGNORE INTO admins (telegram_id, added_by, added_at) VALUES (?,?,?)",
-            (telegram_id, added_by, time.time())
-        )
-        await conn.commit()
+    await db.admins.update_one(
+        {"telegram_id": telegram_id},
+        {"$setOnInsert": {"telegram_id": telegram_id, "added_by": added_by, "added_at": time.time()}},
+        upsert=True,
+    )
 
 
 async def remove_admin(telegram_id: int):
-    async with aiosqlite.connect(DB) as conn:
-        await conn.execute("DELETE FROM admins WHERE telegram_id=?", (telegram_id,))
-        await conn.commit()
+    await db.admins.delete_one({"telegram_id": telegram_id})
 
 
 # ==================== MOVIES ====================
 
 async def add_movie(**kwargs):
+    mid = await _next_id("movies")
+    kwargs["id"] = mid
     kwargs.setdefault("created_at", time.time())
-    cols = ", ".join(kwargs.keys())
-    vals = ", ".join(["?"] * len(kwargs))
-    async with aiosqlite.connect(DB) as conn:
-        cur = await conn.execute(f"INSERT INTO movies ({cols}) VALUES ({vals})", list(kwargs.values()))
-        await conn.commit()
-        return cur.lastrowid
+    kwargs.setdefault("views", 0)
+    await db.movies.insert_one(kwargs)
+    return mid
 
 
 async def get_movie(movie_id: int):
-    async with aiosqlite.connect(DB) as conn:
-        conn.row_factory = aiosqlite.Row
-        cur = await conn.execute("SELECT * FROM movies WHERE id=?", (movie_id,))
-        row = await cur.fetchone()
-        return dict(row) if row else None
+    return await db.movies.find_one({"id": movie_id}, {"_id": 0})
 
 
 async def get_movies(limit=50, category=None, sort="id DESC"):
-    async with aiosqlite.connect(DB) as conn:
-        conn.row_factory = aiosqlite.Row
-        if category:
-            cur = await conn.execute(
-                f"SELECT * FROM movies WHERE category=? ORDER BY {sort} LIMIT ?", (category, limit)
-            )
-        else:
-            cur = await conn.execute(f"SELECT * FROM movies ORDER BY {sort} LIMIT ?", (limit,))
-        return [dict(r) for r in await cur.fetchall()]
+    flt = {"category": category} if category else {}
+    parts = sort.split()
+    sf = parts[0] if parts else "id"
+    sd = -1 if len(parts) > 1 and parts[1].upper() == "DESC" else 1
+    return await db.movies.find(flt, {"_id": 0}).sort(sf, sd).limit(limit).to_list(limit)
 
 
 async def search_movies(query: str):
-    async with aiosqlite.connect(DB) as conn:
-        conn.row_factory = aiosqlite.Row
-        cur = await conn.execute(
-            "SELECT * FROM movies WHERE title LIKE ? OR genre LIKE ? ORDER BY views DESC LIMIT 20",
-            (f"%{query}%", f"%{query}%")
-        )
-        return [dict(r) for r in await cur.fetchall()]
+    return await db.movies.find(
+        {"$or": [
+            {"title": {"$regex": query, "$options": "i"}},
+            {"genre": {"$regex": query, "$options": "i"}},
+        ]}, {"_id": 0}
+    ).sort("views", -1).limit(20).to_list(20)
 
 
 async def get_top_movies(limit=10):
-    async with aiosqlite.connect(DB) as conn:
-        conn.row_factory = aiosqlite.Row
-        cur = await conn.execute("SELECT * FROM movies ORDER BY views DESC LIMIT ?", (limit,))
-        return [dict(r) for r in await cur.fetchall()]
+    return await db.movies.find({}, {"_id": 0}).sort("views", -1).limit(limit).to_list(limit)
 
 
 async def get_recent_movies(limit=5):
-    async with aiosqlite.connect(DB) as conn:
-        conn.row_factory = aiosqlite.Row
-        cur = await conn.execute("SELECT * FROM movies ORDER BY created_at DESC LIMIT ?", (limit,))
-        return [dict(r) for r in await cur.fetchall()]
+    return await db.movies.find({}, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
 
 
 async def update_movie(movie_id: int, **kwargs):
-    sets = ", ".join(f"{k}=?" for k in kwargs)
-    async with aiosqlite.connect(DB) as conn:
-        await conn.execute(f"UPDATE movies SET {sets} WHERE id=?", [*kwargs.values(), movie_id])
-        await conn.commit()
+    await db.movies.update_one({"id": movie_id}, {"$set": kwargs})
 
 
 async def delete_movie(movie_id: int):
-    async with aiosqlite.connect(DB) as conn:
-        await conn.execute("DELETE FROM movies WHERE id=?", (movie_id,))
-        await conn.commit()
+    await db.movies.delete_one({"id": movie_id})
 
 
 async def increment_views(movie_id: int):
-    async with aiosqlite.connect(DB) as conn:
-        await conn.execute("UPDATE movies SET views = views + 1 WHERE id=?", (movie_id,))
-        await conn.commit()
+    await db.movies.update_one({"id": movie_id}, {"$inc": {"views": 1}})
 
 
 async def check_duplicate(title: str):
-    async with aiosqlite.connect(DB) as conn:
-        cur = await conn.execute("SELECT id FROM movies WHERE title=?", (title,))
-        return await cur.fetchone() is not None
+    return await db.movies.find_one({"title": title}) is not None
 
 
 # ==================== WATCH HISTORY ====================
 
 async def add_watch_history(user_id: int, movie_id: int):
-    async with aiosqlite.connect(DB) as conn:
-        await conn.execute(
-            "INSERT INTO watch_history (user_id, movie_id, watched_at) VALUES (?,?,?)",
-            (user_id, movie_id, time.time())
-        )
-        await conn.commit()
+    await db.watch_history.insert_one({"user_id": user_id, "movie_id": movie_id, "watched_at": time.time()})
 
 
 # ==================== CHANNELS ====================
 
-async def add_channel(channel_id: int, url: str = "", name: str = "",
-                      mandatory: bool = False, notification: bool = False, hidden: bool = False):
-    async with aiosqlite.connect(DB) as conn:
-        await conn.execute(
-            "INSERT OR REPLACE INTO channels (channel_id,channel_url,channel_name,is_mandatory,is_notification,is_hidden,added_at) VALUES (?,?,?,?,?,?,?)",
-            (channel_id, url, name, int(mandatory), int(notification), int(hidden), time.time())
-        )
-        await conn.commit()
+async def add_channel(channel_id: int, url="", name="",
+                      mandatory=False, notification=False, hidden=False):
+    await db.channels.update_one(
+        {"channel_id": channel_id},
+        {"$set": {
+            "channel_id": channel_id, "channel_url": url, "channel_name": name,
+            "is_mandatory": int(mandatory), "is_notification": int(notification),
+            "is_hidden": int(hidden), "added_at": time.time(),
+        }},
+        upsert=True,
+    )
 
 
 async def remove_channel(channel_id: int):
-    async with aiosqlite.connect(DB) as conn:
-        await conn.execute("DELETE FROM channels WHERE channel_id=?", (channel_id,))
-        await conn.commit()
+    await db.channels.delete_one({"channel_id": channel_id})
 
 
 async def get_channels():
-    async with aiosqlite.connect(DB) as conn:
-        conn.row_factory = aiosqlite.Row
-        cur = await conn.execute("SELECT * FROM channels ORDER BY id")
-        return [dict(r) for r in await cur.fetchall()]
+    return await db.channels.find({}, {"_id": 0}).sort("_id", 1).to_list(None)
 
 
 async def get_mandatory_channels():
-    async with aiosqlite.connect(DB) as conn:
-        conn.row_factory = aiosqlite.Row
-        cur = await conn.execute("SELECT * FROM channels WHERE is_mandatory=1")
-        return [dict(r) for r in await cur.fetchall()]
+    return await db.channels.find({"is_mandatory": 1}, {"_id": 0}).to_list(None)
 
 
 async def get_notification_channels():
-    async with aiosqlite.connect(DB) as conn:
-        conn.row_factory = aiosqlite.Row
-        cur = await conn.execute("SELECT * FROM channels WHERE is_notification=1")
-        return [dict(r) for r in await cur.fetchall()]
+    return await db.channels.find({"is_notification": 1}, {"_id": 0}).to_list(None)
 
 
 # ==================== RATINGS ====================
 
 async def add_rating(user_id: int, movie_id: int, score: int):
-    async with aiosqlite.connect(DB) as conn:
-        await conn.execute(
-            "INSERT OR REPLACE INTO ratings (user_id, movie_id, score, created_at) VALUES (?,?,?,?)",
-            (user_id, movie_id, score, time.time())
-        )
-        await conn.commit()
+    await db.ratings.update_one(
+        {"user_id": user_id, "movie_id": movie_id},
+        {"$set": {"score": score, "created_at": time.time()}},
+        upsert=True,
+    )
 
 
 async def get_movie_rating(movie_id: int):
-    async with aiosqlite.connect(DB) as conn:
-        cur = await conn.execute(
-            "SELECT AVG(score), COUNT(*) FROM ratings WHERE movie_id=?", (movie_id,)
-        )
-        row = await cur.fetchone()
-        return (round(row[0], 1) if row[0] else 0, row[1])
+    pipe = [
+        {"$match": {"movie_id": movie_id}},
+        {"$group": {"_id": None, "avg": {"$avg": "$score"}, "cnt": {"$sum": 1}}},
+    ]
+    r = await db.ratings.aggregate(pipe).to_list(1)
+    if r:
+        return (round(r[0]["avg"], 1), r[0]["cnt"])
+    return (0, 0)
 
 
 # ==================== STATS ====================
 
 async def get_stats():
-    async with aiosqlite.connect(DB) as conn:
-        s = {}
-        cur = await conn.execute("SELECT COUNT(*) FROM users")
-        real_users = (await cur.fetchone())[0]
-        cur = await conn.execute("SELECT COUNT(*) FROM movies")
-        s["movies"] = (await cur.fetchone())[0]
-        cur = await conn.execute("SELECT COUNT(*) FROM movies WHERE category='kino'")
-        s["kino"] = (await cur.fetchone())[0]
-        cur = await conn.execute("SELECT COUNT(*) FROM movies WHERE category='serial'")
-        s["serial"] = (await cur.fetchone())[0]
-        cur = await conn.execute("SELECT COUNT(*) FROM movies WHERE category='multfilm'")
-        s["multfilm"] = (await cur.fetchone())[0]
-        cur = await conn.execute("SELECT COALESCE(SUM(views),0) FROM movies")
-        real_views = (await cur.fetchone())[0]
-        
-        # Modifiers
-        cur_mod = await conn.execute("SELECT fake_users, fake_views FROM stats_modifier WHERE id=1")
-        row_mod = await cur_mod.fetchone()
-        fake_u, fake_v = (row_mod[0], row_mod[1]) if row_mod else (0, 0)
-        
-        s["users"] = real_users + fake_u
-        s["views"] = real_views + fake_v
-        s["today_users"] = await get_today_users()
-        s["weekly_active"] = await get_weekly_active()
-        cur = await conn.execute("SELECT COUNT(*) FROM channels")
-        s["channels"] = (await cur.fetchone())[0]
-        s["fake_users"] = fake_u
-        s["fake_views"] = fake_v
-        return s
+    s = {}
+    s["users"] = await db.users.count_documents({})
+    s["movies"] = await db.movies.count_documents({})
+    s["kino"] = await db.movies.count_documents({"category": "kino"})
+    s["serial"] = await db.movies.count_documents({"category": "serial"})
+    s["multfilm"] = await db.movies.count_documents({"category": "multfilm"})
+
+    pipe = [{"$group": {"_id": None, "total": {"$sum": "$views"}}}]
+    vr = await db.movies.aggregate(pipe).to_list(1)
+    real_views = vr[0]["total"] if vr else 0
+
+    mod = await db.stats_modifier.find_one({"_id": "main"})
+    fu = mod["fake_users"] if mod else 0
+    fv = mod["fake_views"] if mod else 0
+
+    s["users"] += fu
+    s["views"] = real_views + fv
+    s["fake_users"] = fu
+    s["fake_views"] = fv
+    s["today_users"] = await get_today_users()
+    s["weekly_active"] = await get_weekly_active()
+    s["channels"] = await db.channels.count_documents({})
+    return s
 
 
 async def update_fake_stats(fake_users: int, fake_views: int):
-    async with aiosqlite.connect(DB) as conn:
-        await conn.execute(
-            "INSERT OR REPLACE INTO stats_modifier (id, fake_users, fake_views) VALUES (1, ?, ?)",
-            (fake_users, fake_views)
-        )
-        await conn.commit()
+    await db.stats_modifier.update_one(
+        {"_id": "main"}, {"$set": {"fake_users": fake_users, "fake_views": fake_views}}, upsert=True
+    )
 
 
-# ==================== SEARCH RECORDING ====================
+# ==================== SEARCH ====================
 
 async def record_search(query: str):
-    query = query.strip().lower()
-    if len(query) < 2:
+    q = query.strip().lower()
+    if len(q) < 2:
         return
-    async with aiosqlite.connect(DB) as conn:
-        await conn.execute(
-            "INSERT INTO search_queries (query, count) VALUES (?, 1) "
-            "ON CONFLICT(query) DO UPDATE SET count = count + 1",
-            (query,)
-        )
-        await conn.commit()
+    await db.search_queries.update_one(
+        {"query": q}, {"$inc": {"count": 1}, "$setOnInsert": {"query": q}}, upsert=True
+    )
 
 
 async def get_popular_searches(limit=10):
-    async with aiosqlite.connect(DB) as conn:
-        conn.row_factory = aiosqlite.Row
-        cur = await conn.execute("SELECT * FROM search_queries ORDER BY count DESC LIMIT ?", (limit,))
-        return [dict(r) for r in await cur.fetchall()]
+    return await db.search_queries.find({}, {"_id": 0}).sort("count", -1).limit(limit).to_list(limit)
 
 
-# ==================== RECS ====================
+# ==================== RECOMMENDATIONS ====================
 
 async def get_recommendations(movie_id: int, limit=6):
-    async with aiosqlite.connect(DB) as conn:
-        conn.row_factory = aiosqlite.Row
-        movie = await get_movie(movie_id)
-        if not movie:
-            return []
-        
-        # O'xshash janr yoki kategoriya bo'yicha (kino o'zidan tashqari)
-        cur = await conn.execute(
-            "SELECT * FROM movies WHERE id != ? AND (category = ? OR genre LIKE ?) ORDER BY views DESC LIMIT ?",
-            (movie_id, movie["category"], f"%{movie.get('genre') or ''}%", limit)
-        )
-        res = [dict(r) for r in await cur.fetchall()]
-        if len(res) < limit:
-            # Agar kam bo'lsa, eng ko'p ko'rilgan boshqa kinolardan to'ldiramiz
-            needed = limit - len(res)
-            exclude_ids = [movie_id] + [r["id"] for r in res]
-            placeholders = ",".join(["?"] * len(exclude_ids))
-            cur2 = await conn.execute(
-                f"SELECT * FROM movies WHERE id NOT IN ({placeholders}) ORDER BY views DESC LIMIT ?",
-                (*exclude_ids, needed)
-            )
-            res.extend([dict(r) for r in await cur2.fetchall()])
-        return res
+    movie = await get_movie(movie_id)
+    if not movie:
+        return []
+    flt = {"id": {"$ne": movie_id}, "$or": [
+        {"category": movie["category"]},
+        {"genre": {"$regex": movie.get("genre") or "", "$options": "i"}},
+    ]}
+    res = await db.movies.find(flt, {"_id": 0}).sort("views", -1).limit(limit).to_list(limit)
+    if len(res) < limit:
+        ids = [movie_id] + [r["id"] for r in res]
+        more = await db.movies.find({"id": {"$nin": ids}}, {"_id": 0}).sort("views", -1).limit(limit - len(res)).to_list(limit - len(res))
+        res.extend(more)
+    return res
 
 
 async def get_movie_details_for_user(movie_id: int, user_id: int):
     movie = await get_movie(movie_id)
     if not movie:
         return None
-        
-    async with aiosqlite.connect(DB) as conn:
-        # User bahosi
-        cur_rat = await conn.execute(
-            "SELECT score FROM ratings WHERE user_id=? AND movie_id=?", (user_id, movie_id)
-        )
-        row_rat = await cur_rat.fetchone()
-        user_score = row_rat[0] if row_rat else 0
-        
-        # Umumiy like/dislike soni
-        cur_likes = await conn.execute(
-            "SELECT COUNT(*) FROM ratings WHERE movie_id=? AND score=1", (movie_id,)
-        )
-        likes = (await cur_likes.fetchone())[0]
-        
-        cur_dislikes = await conn.execute(
-            "SELECT COUNT(*) FROM ratings WHERE movie_id=? AND score=-1", (movie_id,)
-        )
-        dislikes = (await cur_dislikes.fetchone())[0]
-
-    movie["user_score"] = user_score
-    movie["likes"] = likes
-    movie["dislikes"] = dislikes
+    rat = await db.ratings.find_one({"user_id": user_id, "movie_id": movie_id})
+    movie["user_score"] = rat["score"] if rat else 0
+    movie["likes"] = await db.ratings.count_documents({"movie_id": movie_id, "score": 1})
+    movie["dislikes"] = await db.ratings.count_documents({"movie_id": movie_id, "score": -1})
     return movie
 
 
 async def get_random_movie():
-    async with aiosqlite.connect(DB) as conn:
-        conn.row_factory = aiosqlite.Row
-        cur = await conn.execute("SELECT * FROM movies ORDER BY RANDOM() LIMIT 1")
-        row = await cur.fetchone()
-        return dict(row) if row else None
+    pipe = [{"$sample": {"size": 1}}, {"$project": {"_id": 0}}]
+    r = await db.movies.aggregate(pipe).to_list(1)
+    return r[0] if r else None
 
 
 async def get_filtered_movies(category=None, genre=None, country=None, year=None, limit=20, sort="id DESC"):
-    async with aiosqlite.connect(DB) as conn:
-        conn.row_factory = aiosqlite.Row
-        conditions = []
-        params = []
-        if category:
-            conditions.append("category = ?")
-            params.append(category)
-        if genre:
-            conditions.append("genre LIKE ?")
-            params.append(f"%{genre}%")
-        if country:
-            conditions.append("country LIKE ?")
-            params.append(f"%{country}%")
-        if year:
-            conditions.append("year = ?")
-            params.append(int(year))
-        
-        where = " AND ".join(conditions)
-        query = "SELECT * FROM movies"
-        if where:
-            query += f" WHERE {where}"
-        query += f" ORDER BY {sort} LIMIT ?"
-        params.append(limit)
-        
-        cur = await conn.execute(query, params)
-        return [dict(r) for r in await cur.fetchall()]
-
+    flt = {}
+    if category:
+        flt["category"] = category
+    if genre:
+        flt["genre"] = {"$regex": genre, "$options": "i"}
+    if country:
+        flt["country"] = {"$regex": country, "$options": "i"}
+    if year:
+        flt["year"] = int(year)
+    parts = sort.split()
+    sf = parts[0] if parts else "id"
+    sd = -1 if len(parts) > 1 and parts[1].upper() == "DESC" else 1
+    return await db.movies.find(flt, {"_id": 0}).sort(sf, sd).limit(limit).to_list(limit)

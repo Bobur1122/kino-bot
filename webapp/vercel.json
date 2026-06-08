@@ -1,0 +1,21 @@
+{
+  "rewrites": [
+    { "source": "/api/movies/popular", "destination": "/api/popular" },
+    { "source": "/api/movies/recent", "destination": "/api/recent" },
+    { "source": "/api/movies/search", "destination": "/api/search" },
+    { "source": "/api/movies/:id/watch", "destination": "/api/watch?id=:id" },
+    { "source": "/api/movies/:id/rate", "destination": "/api/rate?id=:id" },
+    { "source": "/api/movies/:id", "destination": "/api/movie?id=:id" },
+    { "source": "/api/poster/:id", "destination": "/api/poster?id=:id" }
+  ],
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET,POST,OPTIONS" },
+        { "key": "Access-Control-Allow-Headers", "value": "Content-Type" }
+      ]
+    }
+  ]
+}
