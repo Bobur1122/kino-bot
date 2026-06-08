@@ -7,3 +7,4 @@ motor==3.6.0
 pymongo[srv]==4.9.1
 dnspython==2.4.2
 psutil==5.9.7
+beautifulsoup4==4.12.2
