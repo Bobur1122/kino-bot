@@ -45,26 +45,61 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function init() {
         showToast('Kinolar yuklanmoqda...');
+
+        // Loading screen'ni max 3 sekundda yopish (API sekin bo'lsa ham)
+        const hideLoader = setTimeout(() => {
+            if (loadingScreen) loadingScreen.classList.add('hidden');
+            app.style.display = '';
+        }, 3000);
+
         try {
             await loadAllData();
         } catch (e) {
             console.error('Init error:', e);
-            showToast('Ma\'lumotlarni yuklashda xatolik yuz berdi.', 'error');
+            showToast('Server yuklanmoqda, qayta urinilmoqda...', 'info');
+            // Retry after 5 seconds (Render cold start)
+            setTimeout(() => retryLoadData(), 5000);
         }
 
-        setTimeout(() => {
-            if (loadingScreen) loadingScreen.classList.add('hidden');
-            app.style.display = '';
-        }, 800);
+        clearTimeout(hideLoader);
+        if (loadingScreen) loadingScreen.classList.add('hidden');
+        app.style.display = '';
+    }
+
+    async function retryLoadData() {
+        for (let i = 0; i < 3; i++) {
+            try {
+                await loadAllData();
+                showToast('Ma\'lumotlar yuklandi! ✅', 'success');
+                return;
+            } catch (e) {
+                console.error(`Retry ${i + 1} failed:`, e);
+                if (i < 2) {
+                    await new Promise(r => setTimeout(r, 5000));
+                }
+            }
+        }
+        showToast('Server hali uyg\'onmadi. Sahifani qayta yuklang.', 'error');
     }
 
     async function loadAllData() {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
+
         try {
-            const data = await KinoAPI.getMovies(null, 150);
+            const res = await fetch(`${KinoAPI.getBaseUrl()}/api/movies?limit=150`, {
+                signal: controller.signal,
+                headers: { 'Content-Type': 'application/json' }
+            });
+            clearTimeout(timeout);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
             allMovies = data.movies || [];
         } catch (e) {
-            console.error(e);
+            clearTimeout(timeout);
+            console.error('loadAllData error:', e);
             allMovies = [];
+            throw e; // re-throw for retry logic
         }
 
         await renderFeatured();

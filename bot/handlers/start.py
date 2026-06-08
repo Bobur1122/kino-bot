@@ -165,7 +165,7 @@ async def show_random_movie(message: Message):
     await message.answer(caption, reply_markup=kb, parse_mode="HTML")
 
 
-@router.callback_query(F.data.startswith("cat_"))
+@router.callback_query(F.data.regexp(r"^cat_(movies|series|cartoons)_"))
 async def category_callbacks(callback: CallbackQuery):
     action = callback.data.split("_")[1]
     subtype = callback.data.split("_")[2]
